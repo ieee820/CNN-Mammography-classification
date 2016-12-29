@@ -12,11 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ==============================================================================
-"""A simple MNIST classifier which displays summaries in TensorBoard.
- This is an unimpressive MNIST model, but it is a good example of using
-tf.name_scope to make a graph legible in the TensorBoard graph explorer, and of
-naming summary tags so that they are grouped meaningfully in TensorBoard.
-It demonstrates the functionality of every TensorBoard dashboard.
+"""
+Implement batch normalization
 """
 from __future__ import absolute_import
 from __future__ import division
@@ -41,7 +38,7 @@ def train():
   #dataset = ddsm.get_dataset()
   patch_shape = ddsm.getSize()
   train_set_size = ddsm.getDataTrainSize()
-  batch_size = 16*4
+  batch_size = 16
   steps_per_epoch = int(numpy.ceil(train_set_size/batch_size))
   print('Steps per epoch', steps_per_epoch)
 
@@ -123,39 +120,46 @@ def train():
   
   #xa = conv_layer(xa, 3, 32, 46, 'conv2a')
   res1in = xa
-  #xa = conv_layer(xa, 3, 32, 32, 'conv2b')
-  xa = conv_layer(xa, 3, 32, 32, 'conv2c')# + res1in
+  xa = conv_layer(xa, 3, 32, 32, 'conv2b')
+  xa = conv_layer(xa, 3, 32, 32, 'conv2c') + res1in
   xa = tf.nn.max_pool(xa, [1, 2, 2, 1], [1, 2, 2, 1], 'SAME')
 
   xa = conv_layer(xa, 3, 32, 64, 'conv3a')
   res2in = xa
-  #xa = conv_layer(xa, 3, 64, 64, 'conv3b')
-  xa = conv_layer(xa, 3, 64, 64, 'conv3c')# + res2in
+  xa = conv_layer(xa, 3, 64, 64, 'conv3b')
+  xa = conv_layer(xa, 3, 64, 64, 'conv3c') + res2in
   xa = tf.nn.max_pool(xa, [1, 2, 2, 1], [1, 2, 2, 1], 'SAME')
 
-  xa = conv_layer(xa, 3, 64, 80, 'conv4a')
+  xa = conv_layer(xa, 3, 64, 128, 'conv4a')
   res3in = xa
-  #xa = conv_layer(xa, 3, 80, 80, 'conv4b')
-  xa = conv_layer(xa, 3, 80, 80, 'conv4b')# + res3in
+  xa = conv_layer(xa, 3, 128, 128, 'conv4b')
+  xa = conv_layer(xa, 3, 128, 128, 'conv4c') + res3in
   xa = tf.nn.max_pool(xa, [1, 2, 2, 1], [1, 2, 2, 1], 'SAME')
 
-  """xa = conv_layer(xa, 3, 80, 96, 'conv5a')
+  xa = conv_layer(xa, 3, 128, 256, 'conv5a')
   res4in = xa
-  xa = conv_layer(xa, 3, 96, 96, 'conv5b')
-  xa = conv_layer(xa, 3, 96, 96, 'conv5b') + res4in
-  xa = tf.nn.max_pool(xa, [1, 2, 2, 1], [1, 2, 2, 1], 'SAME')"""
+  xa = conv_layer(xa, 3, 256, 256, 'conv5b')
+  xa = conv_layer(xa, 3, 256, 256, 'conv5c') + res4in
+  xa = tf.nn.max_pool(xa, [1, 2, 2, 1], [1, 2, 2, 1], 'SAME')
 
-  fc = 8 * 8 * 80
+  xa = conv_layer(xa, 3, 256, 512, 'conv6a')
+  res5in = xa
+  xa = conv_layer(xa, 3, 512, 512, 'conv6b')
+  xa = conv_layer(xa, 3, 512, 512, 'conv6c') + res5in
+
+  fc = 4**2 * 512
   xa = tf.reshape(xa, [-1, fc])
   hidden1 = nn_layer(xa, fc, 500, 'layer1')
 
   with tf.name_scope('dropout'):
     keep_prob = tf.placeholder(tf.float32)
+    lrn_rate = tf.placeholder(tf.float32)
     tf.summary.scalar('dropout_keep_probability', keep_prob)
     dropped = tf.nn.dropout(hidden1, keep_prob)
 
   # Do not apply softmax activation yet, see below.
-  y = nn_layer(dropped, 500, 2, 'layer2', act=tf.identity)
+  #y = nn_layer(dropped, 500, 2, 'layer2', act=tf.identity)
+  #y = nn_layer(y, fc, 2, 'layer2', act=tf.identity)
   y = nn_layer(xa, fc, 2, 'layer2', act=tf.identity)
   
   with tf.name_scope('cross_entropy'):
@@ -204,10 +208,10 @@ def train():
     k = FLAGS.dropout
     if train:
       xs, ys = ddsm.getTrainBatch(batch_size)
-      return {x: xs, y_: ys, keep_prob: k}
+      return {x: xs, y_: ys, keep_prob: k, lrn_rate: FLAGS.learning_rate}
     else:
       xs, ys = ddsm.getTest()
-      return {x: xs, y_: ys, keep_prob: k}
+      return {x: xs, y_: ys, keep_prob: k, lrn_rate: FLAGS.learning_rate}
 
   
   #def feed_dict(train):
@@ -234,6 +238,8 @@ def train():
       summary, acc = sess.run([merged, accuracy], feed_dict=feed_dict(False))
       test_writer.add_summary(summary, i)
       print('\nAccuracy at step %s: %s' % (i, acc))
+      FLAGS.learning_rate *= 0.9
+      print('Learning rate %f' % FLAGS.learning_rate)
     #else:  # Record train set summaries, and train
     if i % 10 == 0:  # Record execution stats
       run_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)

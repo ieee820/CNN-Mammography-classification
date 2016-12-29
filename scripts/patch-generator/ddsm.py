@@ -56,7 +56,7 @@ patch_size = 64
 max_scale = 0.8
 #sz = patch_size / 2
 def readImage(file):
-	img = (cv2.imread(file, cv2.IMREAD_UNCHANGED).astype('float') / 255)
+	img = (cv2.imread(file, cv2.IMREAD_UNCHANGED).astype('float') / ((2**16)-1))
 
 	if not numpy.random.randint(0, 4) == 0:
  		img = cv2.flip(img, numpy.random.randint(-1, 2))
@@ -79,8 +79,12 @@ def readImage(file):
 	return img
 
 def readTestImage(file):
-	img = (cv2.imread(file, cv2.IMREAD_UNCHANGED).astype('float') / 255)
-	img = img[0:patch_size, 0:patch_size]
+	img = (cv2.imread(file, cv2.IMREAD_UNCHANGED).astype('float') / ((2**16)-1))
+	# Return center patch of size patch_size
+	y = int(img.shape[0] / 2 - patch_size/2)
+	x = int(img.shape[1] / 2 - patch_size/2)
+	img = img[y:y+patch_size, x:x+patch_size]
+	#img = cv2.resize(img, (0,0), fx=32, fy=32, interpolation = cv2.INTER_AREA)
 	return img
 
 # Subtract mean accross pixels
@@ -88,12 +92,15 @@ im_mean = 0
 im_var = 0
 pxl = 0
 for file in tqdm(data_train):
-	im = (cv2.imread(file, cv2.IMREAD_UNCHANGED).astype('float') / 255)
+	im = (cv2.imread(file, cv2.IMREAD_UNCHANGED).astype('float') / ((2**16)-1))
 	im_mean += numpy.mean(im)/len(data_train)
 	im_var += numpy.var(im) * im.size
 	pxl += im.size
 
 im_std = numpy.sqrt(im_var/pxl)
+
+#im_mean = 0
+#im_std = 1
 
 print('Mean: %f, Std: %f' % (im_mean, im_std))
 
@@ -127,7 +134,7 @@ def getTrainBatch(batch_size):
 	i = 0
 	#calc_mean
 	while i < batch_size:
-		img = readImage(data_train[count]).flatten()
+		img = readTestImage(data_train[count]).flatten()
 		#img -= numpy.mean(img)
 		#img -= x.flatten()
 		#img /= std.flatten()

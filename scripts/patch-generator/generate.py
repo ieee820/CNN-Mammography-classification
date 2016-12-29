@@ -13,10 +13,12 @@ import contextlib
 
 """
 Todo
-    Gauss
-    Zoom nivaer
-    Normals: generate depending on right, left, MLO or CC
-    Normals: Don't include to much black or intensity?
+    Gauss or scale patch!
+    Different saturation levels
+
+    # Zoom nivaer
+    # Normals: generate depending on right, left, MLO or CC
+    # Normals: Don't include to much black or intensity?
     Cancers: Generate larger set from overlay
     Cancers: Use info about core
 """
@@ -38,7 +40,96 @@ def showImageFile(file):
     image = cv2.imread(file)
     showImage(image)
 
-def getLesionSize(mat):
+def readBoundary(file):
+    f = open(file, 'r')
+    overlay = f.read()
+    #print overlay
+    lesionsCount = int(re.match(r'TOTAL_ABNORMALITIES\s(\d*)', overlay).group(1))
+    contours = []
+
+    boundary = re.findall(r'BOUNDARY[\n\r]*([\d\s]*)#', overlay, re.M)
+    for i in range(0,lesionsCount):
+        contour = filter(None, boundary[i].split(' '))
+        contours.append(contour)
+
+    return contours
+
+def buildContourFromOverlay(boundary, shape, preview=False):
+    pos = [int(boundary[1]), int(boundary[0])]
+    # Add ~4 due to OOB issues, scale 4x due to prev. scaling
+    mask = numpy.zeros(numpy.multiply(numpy.add(shape, 1),4), dtype=numpy.uint8)
+    try:
+        mask[pos[0], pos[1]] = 255
+    except:
+        pass
+
+    translations = [[-1, 0], [-1,1], [0,1],[1,1],[1,0],[1,-1],[0,-1],[-1,-1]]
+    for i in range(2,len(boundary)):
+        pos = numpy.add(pos,translations[int(boundary[i])])
+        try:
+            mask[pos[0], pos[1]] = 255
+        except:
+            pass
+    
+    (cnts, _) = cv2.findContours(mask, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+    x,y,w,h = cv2.boundingRect(cnts[0])
+    if preview:
+        im = mask.copy()
+        cv2.rectangle(im,(x,y),(x+w,y+h),255,20)
+        showImage(im)
+    #rect = cv2.minAreaRect(cnts[0])
+    #box = cv2.boxPoints(rect)
+    #box = np.int0(box)
+    #cv2.drawContours(mask,[box],0,(0,0,255),2)
+    return numpy.divide([x,y,w,h],4)
+
+def cropPatch(image, box, minPatchSize, preview=False):
+    sz = numpy.array(image.shape)
+    x = box[0]
+    y = box[1]
+    w = box[2]
+    h = box[3]
+
+    while w < minPatchSize:
+        w = w+2 if x+w+1 < sz[1] else w
+        x = x-1 if x >= 1 else x
+    while h < minPatchSize:
+        h = h+2 if y+h+1 < sz[0] else h
+        y = y-1 if y >= 0 else y
+    subpatch = image[y:y+h, x:x+w]
+    if preview: showImage(subpatch)
+    if (numpy.array(subpatch.shape) < numpy.array([64,64])).all():
+        print 'TO SMALL', subpatch.shape
+        sys.exit(1)
+    return subpatch
+
+def getValidPatch(image, patchSize, patchesPerImage=1, preview=True):
+    # Preprocess
+    s_image = cv2.GaussianBlur(image,(101,101),0)
+    s_image = cv2.normalize(s_image, None, 0, 255, cv2.NORM_MINMAX)
+    s_image = s_image.astype(numpy.uint8, copy=False)
+    _,threshold = cv2.threshold(s_image,0,1,cv2.THRESH_BINARY+cv2.THRESH_OTSU)
+    # Find largest region/component
+    (cnts, _) = cv2.findContours(threshold, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+    c = max(cnts, key = cv2.contourArea)
+    mask = numpy.zeros_like(image)
+    cv2.fillPoly(mask, pts =[c], color=1)
+    if preview: showImage(image * mask)
+    # Find valid patches
+    patches = []
+    sz = image.shape
+    for i in xrange(patchesPerImage):
+        y = numpy.random.randint(patchSize/2,sz[0]-patchSize/2)
+        x = numpy.random.randint(patchSize/2,sz[1]-patchSize/2)
+        while mask[y,x] == 0:
+            y = numpy.random.randint(patchSize/2, sz[0]-patchSize/2)
+            x = numpy.random.randint(patchSize/2, sz[1]-patchSize/2)
+        subim = image[y-patchSize/2:y+patchSize/2, x-patchSize/2:x+patchSize/2]
+        if preview: showImage(subim)
+        patches.append(subim)
+    return patches
+
+def getLesionSize(mat): # OLD
     pos = [int(mat[1]), int(mat[0])]
     ext = [pos[0], pos[0], pos[1], pos[1]]
 
@@ -56,7 +147,7 @@ def getLesionSize(mat):
 
     return ext
 
-def processLimits(image, lesionLimits, preview=True, size=32):
+def processLimits(image, lesionLimits, preview=True, size=32): ## OLD
     sz = size/2
     images = []
     for limits in lesionLimits:
@@ -70,7 +161,7 @@ def processLimits(image, lesionLimits, preview=True, size=32):
             print 'rejected image', subimage.shape
     return images
 
-def processLesions(image, lesionLimits, preview=True, size=32):
+def processLesions(image, lesionLimits, preview=True, size=32): # OLD
     images = []
     for l in lesionLimits:
         while l[1] - l[0] < size:
@@ -89,7 +180,7 @@ def processLesions(image, lesionLimits, preview=True, size=32):
         else:
             print 'rejected image', subimage.shape
     return images
-def getOverlayData(file):
+def getOverlayData(file):# OLD
     f = open(file, 'r')
     overlay = f.read()
     #print overlay
@@ -168,7 +259,10 @@ files = ["../DDSM/cases/normals/normal_02/case0200/A_0200_1.LEFT_CC.png"] + file
 def scanFolder(files, isOverlay):
     missing_files = 0
     generated_files = 0
-    #for i in range(45,46):
+
+    w_m = 0
+    h_m = 0
+    #for i in xrange(50):
     for i in xrange(len(files)):
         file = files[i]
         ov_file = file
@@ -192,27 +286,30 @@ def scanFolder(files, isOverlay):
             #showImage(cv2.resize(image, (0,0), fx=0.5, fy=0.5))
 
             patchSize = 128
-            minPatchSize = 64
-            patchScale = 1
+            minPatchSize = 128
+            patchScale = 0.5
            
             if isOverlay:
                 dataset = 'cancers'         
-                lesionLimits = getOverlayData(ov_file)
+                """lesionLimits = getOverlayData(ov_file)
                 lesionLimits = (numpy.array(lesionLimits) * 0.25).astype(numpy.int32)
                 #centers = lesionLimits
                 patches = processLesions(image, lesionLimits, False, minPatchSize)
-                #print len(patches)
+                #print len(patches)"""
+                patches = []
+                boundaries = readBoundary(file.replace(".png", ".OVERLAY"))
+                for boundary in boundaries:
+                    box = buildContourFromOverlay(boundary, image.shape)
+                    w_m += (1.0 * box[2])/len(files)
+                    h_m += (1.0 * box[3])/len(files)
+                    patch = cropPatch(image, box, minPatchSize)
+                    patches.append(patch)
                 
             else:
                 dataset = 'normals'
-                # Pick random patch
-                centers = []
-                for o in xrange(1):
-                    rows, cols = image.shape
-                    srows = numpy.random.randint(patchSize/2, rows - patchSize/2 - 1)
-                    scols = numpy.random.randint(patchSize/2, cols - patchSize/2 - 1)
-                    centers = centers + [numpy.array([srows, scols])]
-                patches = processLimits(image, centers, False, patchSize)
+                # Pick random patch(es)
+                patches = getValidPatch(image, patchSize, 1, False)
+                    
 
             """old_cent = centers.copy()
             slides = [-4, -2, 2, 4]
@@ -226,13 +323,15 @@ def scanFolder(files, isOverlay):
 
             for k in xrange(len(patches)):
                 newName = os.path.basename(file).replace('.png', str(k) + '.png')
-                patch = patches[k]*255
+                patch = patches[k]*(2**16 - 1)
                 rows, cols = patch.shape
-                patch = cv2.resize(patch, (int(cols * patchScale), int(rows * patchScale)))
+                patch = cv2.resize(patch, (int(cols * patchScale), int(rows * patchScale)), interpolation = cv2.INTER_AREA)
+                patch = patch.astype(numpy.uint16)
                 cv2.imwrite(os.path.join(os.path.dirname(__file__), 'dataset', dataset, newName), patch)
                 generated_files += 1
 
-
+    print 'mean w', w_m
+    print 'mean h', h_m
     print 'Missing files:', missing_files
     print 'Generated files:', generated_files
 
@@ -245,65 +344,22 @@ if __name__ == '__main__':
     #numpy.random.shuffle(files)
     print 'Generating cancers set'
     files =  glob.glob(os.path.join(BIN, "cases", "cancers", "*/*/*.OVERLAY"))
-    #scanFolder(files, True)
+    #files = [file[0]]
+    #files = ['../DDSM/cases/cancers/cancer_03/case1016/A_1016_1.LEFT_CC.OVERLAY']
+    scanFolder(files, True)
 
     print 'Generating normals set'
-    #files =  glob.glob(os.path.join(BIN, "cases", "normals", "*/*/*.png"))
-    #scanFolder(files, False)
-
-    file = files[0].replace(".OVERLAY", ".png")
-    image = cv2.imread(file, cv2.IMREAD_UNCHANGED);
-    image = image.astype(numpy.float64, copy=False)
-    image = normalizeDigitizer(image, file)
-    image = 1 - image
-    #showImage(image)
-    s_image = cv2.GaussianBlur(image,(101,101),0)
-    s_image = cv2.normalize(s_image, None, 0, 255, cv2.NORM_MINMAX)
+    files =  glob.glob(os.path.join(BIN, "cases", "normals", "*/*/*.png"))
+    scanFolder(files, False)
 
     if 0:
-        #s_image = cv2.resize(s_image, (0,0), fx=0.1, fy=0.1)
-        s_image = s_image.astype(numpy.uint8, copy=False)
-        ret2,th2 = cv2.threshold(s_image,0,255,cv2.THRESH_BINARY+cv2.THRESH_OTSU)
-        #output = cv2.connectedComponentsWithStats(th2, 4)
-        #showImage(cv2.resize(th2, (0,0), fx=0.5, fy=0.5))
-        
-        #cont = cv2.findContours(th2, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-        #mask = bwlabel.getComponents(th2/255)
-        
-        #print mask
-        print numpy.max(mask)
-        #showImage(mask)
-        print numpy.bincount(mask.flatten())
-        """for k in range(0,numpy.max(mask)):
-            print numpy.sum(mask==k+1)
-            print (mask==k+1).astype(int)*255
-            showImage((mask==k+1).astype(numpy.uint8)*255)"""
-        
-        mask = cv2.resize(mask, (image.shape[1], image.shape[0]))
-        lg = numpy.argmax(numpy.bincount(mask.flatten())[1:]) + 1
-        print image * (mask==lg).astype(int)
-        showImage(image * (mask==lg).astype(int))
-    elif 0:
-        s_image = s_image.astype(numpy.uint8, copy=False)
-        ret2,th2 = cv2.threshold(s_image,0,255,cv2.THRESH_BINARY+cv2.THRESH_OTSU)
-        (cnts, _) = cv2.findContours(th2.copy(), cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)
-        c = max(cnts, key = cv2.contourArea)
-        mask = numpy.zeros_like(image)
-        cv2.fillPoly(mask, pts =[c], color=1)
-        print numpy.max(mask)
-        showImage(image * mask.astype(int))
-    
-
-
-    #showImage(cv2.resize(th2, (0,0), fx=0.5, fy=0.5))
-    
-    #print bwlabel.getComponents(numpy.array([[2, 3, 0],[4, 0, 5],[7, 0, 8]]))
-    #print bwlabel.getComponents(numpy.array([[0, 3, 0],[4, 2, 5],[7, 0, 8]]))
-    #bwlabel.getComponents(numpy.array([[0, 0, 0],[4, 2, 5],[7, 0, 8]]))
-
-
-
-
-
-
+        file = files[0].replace(".OVERLAY", ".png")
+        image = cv2.imread(file, cv2.IMREAD_UNCHANGED);
+        image = image.astype(numpy.float64, copy=False)
+        image = normalizeDigitizer(image, file)
+        image = 1 - image
+        #showImage(image)
+        patchSize = 128
+        minPatchSize = 64
+        patchScale = 1
 
